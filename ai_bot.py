@@ -30,29 +30,40 @@ WATCH_CHANNEL_ID = os.environ.get("WATCH_CHANNEL_ID")
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 SECRET_CHAT_ID = os.environ.get("SECRET_CHAT_ID")
 
-if WATCH_CHANNEL_ID: WATCH_CHANNEL_ID = int(WATCH_CHANNEL_ID)
-if LOG_CHANNEL_ID: LOG_CHANNEL_ID = int(LOG_CHANNEL_ID)
-if SECRET_CHAT_ID: SECRET_CHAT_ID = int(SECRET_CHAT_ID)
+# Безопасная конвертация ID
+def safe_int(val):
+    try:
+        return int(str(val).strip()) if val else None
+    except:
+        return None
 
-intents = discord.Intents.default()
-intents.message_content = True
+WATCH_CHANNEL_ID = safe_int(WATCH_CHANNEL_ID)
+LOG_CHANNEL_ID = safe_int(LOG_CHANNEL_ID)
+SECRET_CHAT_ID = safe_int(SECRET_CHAT_ID)
+
+# Включаем ВСЕ интенты на уровне кода
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 MODEL_NAME = "llama-3.1-8b-instant"
 
+print(f"🚀 Скрипт запущен. Конфиг: WATCH={WATCH_CHANNEL_ID}, LOG={LOG_CHANNEL_ID}, SECRET={SECRET_CHAT_ID}")
+
+@bot.event
+async def on_connect():
+    print("🔌 Бот успешно подключился к шлюзу Discord!")
+
 @bot.event
 async def on_ready():
-    print(f"🤖 ИИ-Судья успешно запущен как {bot.user}!")
-    print(f"🔍 Наблюдение за каналом: {WATCH_CHANNEL_ID}")
+    print(f"🤖 ИИ-Судья полностью готов! Авторизован как: {bot.user}")
 
 # ==========================================
 # 🧠 ФУНКЦИЯ ОБРАБОТКИ И ОТПРАВКИ В ИИ
 # ==========================================
 async def process_game_message(author_name, message_content):
-    if not message_content or not message_content.strip():
-        return
-
+    print(f"🕵️‍♂️ Анализирую текст от {author_name}: {message_content}")
     player_notes = ""
+    
     if SECRET_CHAT_ID:
         secret_channel = bot.get_channel(SECRET_CHAT_ID)
         if secret_channel:
@@ -88,9 +99,8 @@ async def process_game_message(author_name, message_content):
         response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
-            print(f"📥 Лог ИИ для {author_name}: {result}")
+            print(f"📥 Вердикт ИИ: {result}")
             
-            # Фильтруем: шлём в логи ТОЛЬКО подозрительные моменты, чтобы не спамить!
             if "ПОДОЗРИТЕЛЬНО" in result.upper():
                 log_channel = bot.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
@@ -99,35 +109,35 @@ async def process_game_message(author_name, message_content):
                     embed.add_field(name="Текст сообщения из игры", value=message_content, inline=False)
                     embed.add_field(name="Анализ и вердикт Судьи", value=result, inline=False)
                     await log_channel.send(embed=embed)
+                    print("🟢 Эмбед отправлен в лог-канал!")
+        else:
+            print(f"❌ Ошибка Groq! Статус: {response.status_code}, Текст: {response.text}")
     except Exception as e:
         print(f"❌ Ошибка отправки в ИИ: {e}")
 
 # ==========================================
-# ⚡ ПЕРЕХВАТ ОБЫЧНЫХ СООБЩЕНИЙ И ВЕБХУКОВ
+# ⚡ ПЕРЕХВАТ ВСЕХ СООБЩЕНИЙ
 # ==========================================
 @bot.event
 async def on_message(message):
-    # Если сообщение в нужном канале (неважно, от вебхука, бота или игрока)
+    # Логируем ВООБЩЕ ЛЮБОЕ сообщение в консоль Render для проверки активности
     if WATCH_CHANNEL_ID and message.channel.id == WATCH_CHANNEL_ID:
+        print(f"📩 [ЧАТ ИГРЫ] Поймано сообщение! От: {message.author} | Текст: {message.content} | Webhooks/Bots?: {message.author.bot or message.webhook_id is not None}")
+        
         if message.author == bot.user:
             return
-            
-        # Получаем чистый текст сообщения
+
         content = message.content
-        
-        # Если DiscordSRV отправляет сообщения через Embeds (карточки)
+        author_name = message.author.display_name
+
+        # Перехват для DiscordSRV Embeds (если чат идёт карточками)
         if not content and message.embeds:
             embed = message.embeds[0]
             author_name = embed.author.name if embed.author else "Игрок"
             content = embed.description or ""
-        else:
-            author_name = message.author.display_name
 
-        # Запускаем ИИ-анализ
         await process_game_message(author_name, content)
-
     else:
-        # Для остальных каналов игнорируем ботов и обрабатываем префиксы (!тест)
         if message.author.bot:
             return
         await bot.process_commands(message)
@@ -137,11 +147,11 @@ async def on_message(message):
 # ==========================================
 @bot.command(name="тест")
 async def test_ai(ctx, *, question: str):
-    await ctx.send("🤖 *Запрос в Groq отправлен...*")
+    await ctx.send("🤖 *Запрос отправлен...*")
     payload = {
         "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": "Ты — ИИ-помощник. Отвечай кратко на русском."},
+            {"role": "system", "content": "Ты — ИИ-помощник."},
             {"role": "user", "content": question}
         ]
     }
