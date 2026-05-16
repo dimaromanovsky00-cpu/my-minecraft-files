@@ -127,11 +127,10 @@ async def analyze_text(author, text):
         print(f"❌ Ошибка сети с ИИ: {err}", flush=True)
 
 # ==========================================
-# 🛑 УЛЬТРА-ПЕРЕХВАТ СЫРЫХ СОБЫТИЙ (ДЛЯ ВЕБХУКОВ DISCORDSRV)
+# 🛑 УЛЬТРА-ПЕРЕХВАТ СЫРЫХ СОБЫТИЙ (С ПОЛНЫМ ДЕБАГОМ)
 # ==========================================
 @client.event
 async def on_raw_message_create(payload):
-    # Проверяем, что сообщение пришло именно в целевой канал чата игры
     if WATCH_CHANNEL_ID and payload.channel_id == WATCH_CHANNEL_ID:
         
         try:
@@ -141,32 +140,45 @@ async def on_raw_message_create(payload):
             print(f"⚠️ Не удалось прочесть сырое сообщение: {fetch_err}", flush=True)
             return
 
-        # Игнорируем сообщения самого ИИ-Судьи, чтобы не зациклиться
         if message.author.id == client.user.id:
             return
 
-        print(f"📥 [СЫРОЙ ПЕРЕХВАТ] Шорох в канале! Автор: {message.author} (ID: {message.author.id})", flush=True)
-
-        content = message.content
+        print(f"\n📥 [ПЕРЕХВАТ] КТО-ТО НАПИСАЛ! Автор: {message.author} (Бот/Вебхук: {message.author.bot})", flush=True)
+        
+        content = ""
         author_name = message.author.display_name
 
-        # Разбор формата DiscordSRV (если текст упакован в Embed-карточку)
+        # 🕵️‍♂️ ДЕБАГ ПОЛЯ: Распечатываем всё, что прилетело от DiscordSRV
+        print(f"📋 Сырой контент (content): '{message.content}'", flush=True)
+        print(f"📋 Кол-во эмбедов (embeds): {len(message.embeds)}", flush=True)
+
+        # 1. Проверяем обычный текст
+        if message.content and message.content.strip():
+            content = message.content
+
+        # 2. Проверяем сложные эмбеды от вебхуков плагина
         if not content and message.embeds:
             emb = message.embeds[0]
-            author_name = emb.author.name if emb.author else "Игрок сервера"
-            content = emb.description or ""
+            print(f"📊 Свойства эмбеда -> Title: '{emb.title}', Desc: '{emb.description}'", flush=True)
+            if emb.author:
+                print(f"📊 Автор эмбеда -> Name: '{emb.author.name}'", flush=True)
+                author_name = emb.author.name
+            
+            # Собираем текст из любого доступного стандартного поля
+            content = emb.description or emb.title or ""
+            
+            # Если DiscordSRV засунул текст в блоки полей (fields)
+            if not content and emb.fields:
+                print(f"📊 Найдены поля в эмбеде! Fields: {emb.fields}", flush=True)
+                content = " ".join([f.value for f in emb.fields if f.value])
 
-        # Если текст пустой, но есть системный контент вебхука
-        if not content and hasattr(message, 'system_content'):
-            content = message.system_content
+        print(f"📝 ИТОГОВЫЙ РАСПОЗНАННЫЙ ТЕКСТ: '{content}' от {author_name}\n", flush=True)
 
-        print(f"📝 Распознанный текст: '{content}' от {author_name}", flush=True)
-
-        # Если текст успешно извлечен — отправляем нейросети
+        # Если текст вытащили — отправляем в Groq ИИ
         if content and content.strip():
             await analyze_text(author_name, content)
         else:
-            print("⚠️ Сообщение оказалось пустым или его формат не распознан.", flush=True)
+            print("⚠️ Робот не смог извлечь текст. Проверь логи дебага выше!", flush=True)
 
 if __name__ == "__main__":
     client.run(TOKEN)
