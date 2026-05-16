@@ -32,7 +32,7 @@ MODEL_NAME = "llama-3.1-8b-instant"
 
 @app.route('/', methods=['GET', 'HEAD'])
 def index():
-    return "ИИ-Судья активно слушает игровой чат Дискорда!", 200
+    return "ИИ-Судья активно слушает DiscordSRV мост сервера!", 200
 
 # ==========================================
 # 🧠 ОБРАБОТКА ТЕКСТА ЧЕРЕЗ ИИ
@@ -93,54 +93,59 @@ async def analyze_text(author, text):
         print(f"❌ Ошибка сети с ИИ: {err}", flush=True)
 
 # ==========================================
-# 📡 ДВОЙНОЙ ПЕРЕХВАТ ИЗ ТЕКСТОВОГО КАНАЛА
+# 📡 ИСПРАВЛЕННЫЙ ДВОЙНОЙ ПЕРЕХВАТ (БЕЗ ЖЕСТКОГО ИГНОРА БОТА)
 # ==========================================
 
-# Способ 1: Стандартный обработчик (для обычных сообщений пользователей)
+# Способ 1: Стандартный обработчик
 @client.event
 async def on_message(message):
     if WATCH_CHANNEL_ID and message.channel.id == WATCH_CHANNEL_ID:
-        if message.author.id == client.user.id:
+        # Пропускаем только логи самого Судьи, чтобы не читать себя до бесконечности
+        if message.embeds and any("Фиксация угрозы" in (e.title or "") for e in message.embeds):
             return
-        print(f"📥 [on_message] Активность от {message.author}", flush=True)
+        
+        print(f"📥 [on_message] Активность! От: {message.author} (ID: {message.author.id})", flush=True)
         await process_discord_msg(message)
 
-# Способ 2: Сырой низкоуровневый перехват (гарантированно ловит вебхуки DiscordSRV)
+# Способ 2: Сырой перехват шлюза
 @client.event
 async def on_raw_message_create(payload):
     if WATCH_CHANNEL_ID and payload.channel_id == WATCH_CHANNEL_ID:
-        # Проверяем, чтобы бот не читал сам себя
-        if payload.message_id and payload.author_id == client.user.id:
-            return
-        print(f"📥 [on_raw_message] Шлюз зафиксировал пакет от DiscordSRV/Игрока!", flush=True)
+        print(f"📥 [on_raw_message] Пакет на шлюзе! Автор ID: {payload.author_id}", flush=True)
         try:
             channel = client.get_channel(payload.channel_id) or await client.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
+            
+            if message.embeds and any("Фиксация угрозы" in (e.title or "") for e in message.embeds):
+                return
+                
             await process_discord_msg(message)
         except Exception as e:
             print(f"⚠️ Ошибка разбора сырого пакета: {e}", flush=True)
 
 # ==========================================
-# 📊 УЛЬТРА-РАЗБОР ВЕБХУКОВ И СТРУКТУРЫ DISCORDSRV
+# 📊 УЛЬТРА-РАЗБОР СТРУКТУРЫ ВЕБХУКОВ И ТЕКСТА
 # ==========================================
 async def process_discord_msg(message):
     content = message.content
     author_name = message.author.display_name
 
-    # Проверка 1: Если сообщение отправлено через вебхук плагина DiscordSRV
-    if message.webhook_id is not None:
-        print("📡 Обнаружен входящий вебхук DiscordSRV! Вытаскиваем данные...", flush=True)
-        if content and content.strip():
-            # Если DiscordSRV шлёт текст в формате "Ник: текст"
-            if ":" in content:
-                parts = content.split(":", 1)
-                author_name = parts[0].strip()
-                content = parts[1].strip()
+    # Если DiscordSRV шлёт текст от имени бота в формате "Ник: текст" или "[Игрок] Ник: текст"
+    if content and content.strip():
+        if ":" in content:
+            parts = content.split(":", 1)
+            # Вытаскиваем чистый ник игрока из левой части, убирая [Префиксы]
+            raw_author = parts[0].strip()
+            if "]" in raw_author:
+                raw_author = raw_author.split("]")[-1].strip()
+            
+            author_name = raw_author
+            content = parts[1].strip()
 
-    # Проверка 2: Если DiscordSRV упаковал сообщение в Эмбед (карточку)
+    # Если DiscordSRV упаковал сообщение в Эмбед (карточку)
     if not content and message.embeds:
         emb = message.embeds[0]
-        print(f"📊 DiscordSRV прислал Embed -> Title: '{emb.title}', Desc: '{emb.description}'", flush=True)
+        print(f"📊 Обнаружен Embed -> Title: '{emb.title}', Desc: '{emb.description}'", flush=True)
         
         if emb.author:
             author_name = emb.author.name
@@ -149,17 +154,15 @@ async def process_discord_msg(message):
             
         content = emb.description or emb.title or ""
         
-        # Если текст зашит внутри блоков-полей карточки
         if not content and emb.fields:
             content = " ".join([f.value for f in emb.fields if f.value])
 
-    # Итоговый запуск ИИ, если текст был успешно очищен и найден
+    # Итоговый запуск ИИ, если текст успешно распознан
     if content and content.strip():
-        # Очищаем от возможных символов разметки, которые любит лепить плагин
         content = content.replace("`", "").strip()
         await analyze_text(author_name, content)
     else:
-        print("⚠️ Сообщение оказалось пустым или плагин использует нетипичный формат.", flush=True)
+        print("⚠️ Сообщение не содержит текста для анализа ИИ.", flush=True)
 
 # ==========================================
 # 🟢 СТАРТ СИСТЕМЫ
@@ -171,7 +174,7 @@ async def on_ready():
         try:
             ch = client.get_channel(LOG_CHANNEL_ID)
             if ch:
-                await ch.send("🤖 **ИИ-Судья успешно обновил модули и готов к перехвату чата Майнкрафта!**")
+                await ch.send("🤖 **ИИ-Судья подключился к мосту DiscordSRV! Ожидаю сообщений из игры.**")
         except:
             pass
 
