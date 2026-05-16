@@ -39,7 +39,7 @@ WATCH_CHANNEL_ID = clean_id(WATCH_CHANNEL_ID)
 LOG_CHANNEL_ID = clean_id(LOG_CHANNEL_ID)
 SECRET_CHAT_ID = clean_id(SECRET_CHAT_ID)
 
-# Включаем все интенты
+# Включаем абсолютно все интенты шлюза
 intents = discord.Intents.all()
 client = discord.Client(intents=intents)
 
@@ -111,7 +111,7 @@ async def analyze_text(author, text):
             verdict = res.json()['choices'][0]['message']['content']
             print(f"🤖 Вердикт Groq: {verdict}", flush=True)
             
-            # Логируем ВСЕГДА, если нашли угрозу
+            # Логируем в Дискорд, только если нашли реальную угрозу
             if "ПОДОЗРИТЕЛЬНО" in verdict.upper():
                 log_ch = client.get_channel(LOG_CHANNEL_ID)
                 if log_ch:
@@ -127,29 +127,46 @@ async def analyze_text(author, text):
         print(f"❌ Ошибка сети с ИИ: {err}", flush=True)
 
 # ==========================================
-# 🛑 ПЕРЕХВАТЧИК СООБЩЕНИЙ С СЕРВЕРА
+# 🛑 УЛЬТРА-ПЕРЕХВАТ СЫРЫХ СОБЫТИЙ (ДЛЯ ВЕБХУКОВ DISCORDSRV)
 # ==========================================
 @client.event
-async def on_message(message):
-    # Если это целевой канал игрового чата
-    if WATCH_CHANNEL_ID and message.channel.id == WATCH_CHANNEL_ID:
-        # Проверяем, что это не сообщение нашего же ИИ-Судьи
-        if message.author == client.user:
+async def on_raw_message_create(payload):
+    # Проверяем, что сообщение пришло именно в целевой канал чата игры
+    if WATCH_CHANNEL_ID and payload.channel_id == WATCH_CHANNEL_ID:
+        
+        try:
+            channel = client.get_channel(payload.channel_id) or await client.fetch_channel(payload.channel_id)
+            message = await channel.fetch_message(payload.message_id)
+        except Exception as fetch_err:
+            print(f"⚠️ Не удалось прочесть сырое сообщение: {fetch_err}", flush=True)
             return
 
-        print(f"📥 Поймано сообщение в игровом канале от {message.author}", flush=True)
+        # Игнорируем сообщения самого ИИ-Судьи, чтобы не зациклиться
+        if message.author.id == client.user.id:
+            return
+
+        print(f"📥 [СЫРОЙ ПЕРЕХВАТ] Шорох в канале! Автор: {message.author} (ID: {message.author.id})", flush=True)
 
         content = message.content
         author_name = message.author.display_name
 
-        # Разбор формата DiscordSRV (если текст упакован в Embed)
+        # Разбор формата DiscordSRV (если текст упакован в Embed-карточку)
         if not content and message.embeds:
             emb = message.embeds[0]
-            author_name = emb.author.name if emb.author else "Игрок"
+            author_name = emb.author.name if emb.author else "Игрок сервера"
             content = emb.description or ""
 
-        if content.strip():
+        # Если текст пустой, но есть системный контент вебхука
+        if not content and hasattr(message, 'system_content'):
+            content = message.system_content
+
+        print(f"📝 Распознанный текст: '{content}' от {author_name}", flush=True)
+
+        # Если текст успешно извлечен — отправляем нейросети
+        if content and content.strip():
             await analyze_text(author_name, content)
+        else:
+            print("⚠️ Сообщение оказалось пустым или его формат не распознан.", flush=True)
 
 if __name__ == "__main__":
     client.run(TOKEN)
