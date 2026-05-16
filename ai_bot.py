@@ -25,10 +25,10 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 # 🤖 НАСТРОЙКИ БОТА И ПЕРЕМЕННЫЕ
 # ==========================================
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-API_KEY = os.environ.get("DEEPSEEK_API_KEY") # Твой рабочий ключ Groq (gsk_...)
+API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 WATCH_CHANNEL_ID = os.environ.get("WATCH_CHANNEL_ID")
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
-SECRET_CHAT_ID = os.environ.get("SECRET_CHAT_ID") # Наш секретный кабинет досье
+SECRET_CHAT_ID = os.environ.get("SECRET_CHAT_ID")
 
 if WATCH_CHANNEL_ID: WATCH_CHANNEL_ID = int(WATCH_CHANNEL_ID)
 if LOG_CHANNEL_ID: LOG_CHANNEL_ID = int(LOG_CHANNEL_ID)
@@ -38,29 +38,26 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Сверхбыстрая актуальная модель Groq
 MODEL_NAME = "llama-3.1-8b-instant"
 
 @bot.event
 async def on_ready():
-    print(f"🤖 ИИ-Судья запущен как {bot.user}!")
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send("🟢 **ИИ-Судья успешно перезапущен! Защита от вебхуков снята, система полностью активна.**")
+    print(f"🤖 ИИ-Судья успешно запущен как {bot.user}!")
+    print(f"🔍 Параметры: WATCH={WATCH_CHANNEL_ID}, LOG={LOG_CHANNEL_ID}, SECRET={SECRET_CHAT_ID}")
 
-# ==========================================
-# 🛑 ЕДИНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ (on_message)
-# ==========================================
 @bot.event
 async def on_message(message):
-    # 1. Если это сообщение пришло в игровой чат Майнкрафта
+    # ПРОВЕРКА 1: Видит ли бот вообще хоть какие-то сообщения в целевом канале?
     if WATCH_CHANNEL_ID and message.channel.id == WATCH_CHANNEL_ID:
-        # Защита от самоповтора: игнорируем только сообщения самого ИИ-Судьи
+        print(f"📥 [ОТЛАДКА] Бот поймал сообщение в игровом канале!")
+        print(f"👤 Автор: {message.author} (Бот? {message.author.bot})")
+        print(f"📝 Текст: {message.content}")
+
         if message.author == bot.user:
+            print("🚫 Это собственное сообщение бота, игнорируем.")
             return
             
         player_notes = ""
-        # Динамически вытаскиваем историю сообщений из секретного кабинета админа
         if SECRET_CHAT_ID:
             secret_channel = bot.get_channel(SECRET_CHAT_ID)
             if secret_channel:
@@ -72,21 +69,17 @@ async def on_message(message):
                     if notes:
                         player_notes = "\n".join(notes)
                 except Exception as history_error:
-                    print(f"Не удалось прочитать секретный чат: {history_error}")
+                    print(f"❌ Ошибка чтения секретного чата: {history_error}")
 
-        # Формируем расширенную инструкцию для ИИ-Судьи
         system_prompt = (
             "Ты — скрытый ИИ-модератор Майнкрафт сервера DigitalMine. Твоя задача — анализировать сообщения игроков.\n"
             "Если игрок замышляет гриферство, кражу ресурсов, поджог привата, заговор против администрации, "
             "попытку обмана или проявляет открытую агрессию, отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина]. "
             "Если сообщение обычное и безопасное, пиши [БЕЗОПАСНО].\n"
             "Отвечай строго на русском языке.\n\n"
-            "⚠️ ВАЖНО: Ниже приведены актуальные секретные досье и заметки об игроках от Администратора. "
-            "Обязательно учитывай эти характеры, контекст прошлых отношений и предупреждения при оценке фраз:\n"
-            f"{player_notes if player_notes else 'Особых примечаний по игрокам пока нет. Суди по стандартным правилам.'}"
+            f"Заметки админа:\n{player_notes}"
         )
 
-        # Вытаскиваем ник (работает и для вебхуков DiscordSRV)
         author_name = message.author.display_name
 
         payload = {
@@ -99,54 +92,48 @@ async def on_message(message):
         headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
         
         try:
+            print("🧠 Отправляю запрос в Groq...")
             response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
             if response.status_code == 200:
                 result = response.json()['choices'][0]['message']['content']
+                print(f"🤖 Ответ ИИ: {result}")
                 
-                # Если ИИ вынес вердикт подозрительности
-                if "ПОДОЗРИТЕЛЬНО" in result.upper():
-                    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-                    if log_channel:
-                        embed = discord.Embed(title="🚨 ИИ-Судья зафиксировал угрозу из игры!", color=discord.Color.red())
-                        embed.add_field(name="Подозреваемый", value=author_name, inline=True)
-                        embed.add_field(name="Текст сообщения", value=message.content, inline=False)
-                        embed.add_field(name="Анализ и вердикт Судьи", value=result, inline=False)
-                        await log_channel.send(embed=embed)
+                # ВРЕМЕННО: Слём ВСЕ вердикты в логи, чтобы понять, работает ли отправка!
+                log_channel = bot.get_channel(LOG_CHANNEL_ID)
+                if log_channel:
+                    color = discord.Color.red() if "ПОДОЗРИТЕЛЬНО" in result.upper() else discord.Color.green()
+                    embed = discord.Embed(title="🔍 Тестовый анализ Судьи", color=color)
+                    embed.add_field(name="Игрок", value=author_name, inline=True)
+                    embed.add_field(name="Сообщение", value=message.content, inline=False)
+                    embed.add_field(name="Вердикт", value=result, inline=False)
+                    await log_channel.send(embed=embed)
+                    print("🟢 Эмбед успешно отправлен в лог-канал!")
+            else:
+                print(f"❌ Ошибка Groq! Статус: {response.status_code}, Текст: {response.text}")
         except Exception as e:
-            print(f"Ошибка автоматического анализа чата: {e}")
+            print(f"❌ Ошибка во время анализа: {e}")
 
-    # 2. Для всех остальных каналов (например, твои ручные команды !тест)
     else:
-        # Игнорируем сообщения от любых других ботов, чтобы избежать спама
         if message.author.bot:
             return
         await bot.process_commands(message)
 
-# ==========================================
-# 💬 РУЧНАЯ КОМАНДА ДЛЯ ПРОВЕРКИ (!тест)
-# ==========================================
+# === КОМАНДА !тест ===
 @bot.command(name="тест")
 async def test_ai(ctx, *, question: str):
-    await ctx.send("🤖 *Посылаю сверхбыстрый запрос в Groq...*")
-    
     payload = {
         "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": "Ты — ИИ-помощник майнкрафт сервера DigitalMine. Отвечай кратко, емко и строго на русском языке."},
+            {"role": "system", "content": "Ты — ИИ-помощник. Отвечай кратко."},
             {"role": "user", "content": question}
         ]
     }
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    
     try:
         response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
-            await ctx.send(f"💬 **Ответ ИИ:**\n{result}")
-        else:
-            await ctx.send(f"❌ Ошибка Groq! Код ответа: {response.status_code}")
+        await ctx.send(f"💬 {response.json()['choices'][0]['message']['content']}")
     except Exception as e:
-        await ctx.send(f"❌ Произошла ошибка: {e}")
+        await ctx.send(f"❌ Ошибка: {e}")
 
 if __name__ == "__main__":
     bot.run(TOKEN)
