@@ -1,28 +1,27 @@
 import os
 import discord
-from discord.ext import commands
 import requests
 import http.server
 import socketserver
 import threading
 
 # ==========================================
-# 🛠️ КОД-ОБМАНКА ДЛЯ ПОРТА RENDER (БУДИЛЬНИК)
+# 🛠️ ВЕБ-СЕРВЕР ДЛЯ РЕНДЕРА (МГНОВЕННЫЙ ВЫВОД)
 # ==========================================
 def run_dummy_server():
     handler = http.server.SimpleHTTPRequestHandler
     port = int(os.environ.get("PORT", 10000))
     try:
         with socketserver.TCPServer(("", port), handler) as httpd:
-            print(f"🌍 Веб-заглушка запущена на порту {port}")
+            print(f"🌍 Веб-заглушка работает на порту {port}", flush=True)
             httpd.serve_forever()
     except Exception as e:
-        print(f"⚠️ Ошибка веб-сервера: {e}")
+        print(f"⚠️ Ошибка веб-сервера: {e}", flush=True)
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # ==========================================
-# 🤖 НАСТРОЙКИ БОТА И ПЕРЕМЕННЫЕ
+# 🤖 НАСТРОЙКИ И ПОДГОТОВКА ID
 # ==========================================
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 API_KEY = os.environ.get("DEEPSEEK_API_KEY")
@@ -30,137 +29,127 @@ WATCH_CHANNEL_ID = os.environ.get("WATCH_CHANNEL_ID")
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 SECRET_CHAT_ID = os.environ.get("SECRET_CHAT_ID")
 
-# Безопасная конвертация ID
-def safe_int(val):
+def clean_id(val):
     try:
         return int(str(val).strip()) if val else None
     except:
         return None
 
-WATCH_CHANNEL_ID = safe_int(WATCH_CHANNEL_ID)
-LOG_CHANNEL_ID = safe_int(LOG_CHANNEL_ID)
-SECRET_CHAT_ID = safe_int(SECRET_CHAT_ID)
+WATCH_CHANNEL_ID = clean_id(WATCH_CHANNEL_ID)
+LOG_CHANNEL_ID = clean_id(LOG_CHANNEL_ID)
+SECRET_CHAT_ID = clean_id(SECRET_CHAT_ID)
 
-# Включаем ВСЕ интенты на уровне кода
+# Включаем все интенты
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+client = discord.Client(intents=intents)
 
 MODEL_NAME = "llama-3.1-8b-instant"
 
-print(f"🚀 Скрипт запущен. Конфиг: WATCH={WATCH_CHANNEL_ID}, LOG={LOG_CHANNEL_ID}, SECRET={SECRET_CHAT_ID}")
+print(f"🚀 СТАРТ СКИПТА! Наблюдение за: {WATCH_CHANNEL_ID} | Логи в: {LOG_CHANNEL_ID}", flush=True)
 
-@bot.event
+# ==========================================
+# ⚡ МГНОВЕННЫЕ ЭВЕНТЫ ПОДКЛЮЧЕНИЯ
+# ==========================================
+@client.event
 async def on_connect():
-    print("🔌 Бот успешно подключился к шлюзу Discord!")
+    print("🔌 Подключено к шлюзу Discord! Ждем готовности...", flush=True)
 
-@bot.event
+@client.event
 async def on_ready():
-    print(f"🤖 ИИ-Судья полностью готов! Авторизован как: {bot.user}")
+    print(f"🟢 БОТ ПОЛНОСТЬЮ ГОТОВ! Имя в сети: {client.user}", flush=True)
+    # Сразу шлем сигнал в лог-канал, чтобы проверить отправку сообщений
+    if LOG_CHANNEL_ID:
+        try:
+            ch = client.get_channel(LOG_CHANNEL_ID)
+            if ch:
+                await ch.send("🤖 **ИИ-Судья успешно вошёл в сеть и готов к тестам чата!**")
+                print("🟢 Тестовое сообщение отправлено в Дискорд!", flush=True)
+        except Exception as log_err:
+            print(f"❌ Не удалось отправить старт-сообщение в канал: {log_err}", flush=True)
 
 # ==========================================
-# 🧠 ФУНКЦИЯ ОБРАБОТКИ И ОТПРАВКИ В ИИ
+# 🧠 ОБРАБОТКА ТЕКСТА ЧЕРЕЗ ИИ
 # ==========================================
-async def process_game_message(author_name, message_content):
-    print(f"🕵️‍♂️ Анализирую текст от {author_name}: {message_content}")
-    player_notes = ""
+async def analyze_text(author, text):
+    print(f"🔍 ИИ анализирует фразу от [{author}]: {text}", flush=True)
     
+    player_notes = ""
     if SECRET_CHAT_ID:
-        secret_channel = bot.get_channel(SECRET_CHAT_ID)
-        if secret_channel:
-            notes = []
-            try:
-                async for msg in secret_channel.history(limit=50, oldest_first=False):
+        try:
+            sec_ch = client.get_channel(SECRET_CHAT_ID)
+            if sec_ch:
+                notes = []
+                async for msg in sec_ch.history(limit=30, oldest_first=False):
                     if not msg.author.bot and msg.content.strip():
                         notes.append(f"- {msg.content}")
                 if notes:
                     player_notes = "\n".join(notes)
-            except Exception as history_error:
-                print(f"❌ Ошибка чтения секретного чата: {history_error}")
+        except Exception as e:
+            print(f"⚠️ Ошибка досье: {e}", flush=True)
 
     system_prompt = (
-        "Ты — скрытый ИИ-модератор Майнкрафт сервера DigitalMine. Твоя задача — анализировать сообщения игроков.\n"
-        "Если игрок замышляет гриферство, кражу ресурсов, поджог привата, заговор против администрации, "
-        "попытку обмана или проявляет открытую агрессию, отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина]. "
+        "Ты — скрытый ИИ-модератор сервера DigitalMine. Твоя задача — анализировать чат.\n"
+        "Если игрок замышляет гриферство, кражу ресурсов, заговор против админов или проявляет агрессию, "
+        "отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина].\n"
         "Если сообщение обычное и безопасное, пиши [БЕЗОПАСНО].\n"
-        "Отвечай строго на русском языке.\n\n"
-        f"Заметки админа об игроках:\n{player_notes}"
+        "Отвечай только на русском языке.\n\n"
+        f"Заметки админа:\n{player_notes}"
     )
 
     payload = {
         "model": MODEL_NAME,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Игрок {author_name} пишет в игровой чат: {message_content}"}
+            {"role": "user", "content": f"Игрок {author} пишет: {text}"}
         ]
     }
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    
+
     try:
-        response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
-            print(f"📥 Вердикт ИИ: {result}")
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
+        if res.status_code == 200:
+            verdict = res.json()['choices'][0]['message']['content']
+            print(f"🤖 Вердикт Groq: {verdict}", flush=True)
             
-            if "ПОДОЗРИТЕЛЬНО" in result.upper():
-                log_channel = bot.get_channel(LOG_CHANNEL_ID)
-                if log_channel:
-                    embed = discord.Embed(title="🚨 ИИ-Судья зафиксировал угрозу!", color=discord.Color.red())
-                    embed.add_field(name="Подозреваемый игрок", value=author_name, inline=True)
-                    embed.add_field(name="Текст сообщения из игры", value=message_content, inline=False)
-                    embed.add_field(name="Анализ и вердикт Судьи", value=result, inline=False)
-                    await log_channel.send(embed=embed)
-                    print("🟢 Эмбед отправлен в лог-канал!")
+            # Логируем ВСЕГДА, если нашли угрозу
+            if "ПОДОЗРИТЕЛЬНО" in verdict.upper():
+                log_ch = client.get_channel(LOG_CHANNEL_ID)
+                if log_ch:
+                    emb = discord.Embed(title="🚨 Фиксация угрозы в чате!", color=discord.Color.red())
+                    emb.add_field(name="Игрок", value=author, inline=True)
+                    emb.add_field(name="Фраза", value=text, inline=False)
+                    emb.add_field(name="Судейский вердикт", value=verdict, inline=False)
+                    await log_ch.send(embed=emb)
+                    print("🔴 Эмбед угрозы отправлен в Дискорд!", flush=True)
         else:
-            print(f"❌ Ошибка Groq! Статус: {response.status_code}, Текст: {response.text}")
-    except Exception as e:
-        print(f"❌ Ошибка отправки в ИИ: {e}")
+            print(f"❌ Ошибка Groq API: {res.status_code} | {res.text}", flush=True)
+    except Exception as err:
+        print(f"❌ Ошибка сети с ИИ: {err}", flush=True)
 
 # ==========================================
-# ⚡ ПЕРЕХВАТ ВСЕХ СООБЩЕНИЙ
+# 🛑 ПЕРЕХВАТЧИК СООБЩЕНИЙ С СЕРВЕРА
 # ==========================================
-@bot.event
+@client.event
 async def on_message(message):
-    # Логируем ВООБЩЕ ЛЮБОЕ сообщение в консоль Render для проверки активности
+    # Если это целевой канал игрового чата
     if WATCH_CHANNEL_ID and message.channel.id == WATCH_CHANNEL_ID:
-        print(f"📩 [ЧАТ ИГРЫ] Поймано сообщение! От: {message.author} | Текст: {message.content} | Webhooks/Bots?: {message.author.bot or message.webhook_id is not None}")
-        
-        if message.author == bot.user:
+        # Проверяем, что это не сообщение нашего же ИИ-Судьи
+        if message.author == client.user:
             return
+
+        print(f"📥 Поймано сообщение в игровом канале от {message.author}", flush=True)
 
         content = message.content
         author_name = message.author.display_name
 
-        # Перехват для DiscordSRV Embeds (если чат идёт карточками)
+        # Разбор формата DiscordSRV (если текст упакован в Embed)
         if not content and message.embeds:
-            embed = message.embeds[0]
-            author_name = embed.author.name if embed.author else "Игрок"
-            content = embed.description or ""
+            emb = message.embeds[0]
+            author_name = emb.author.name if emb.author else "Игрок"
+            content = emb.description or ""
 
-        await process_game_message(author_name, content)
-    else:
-        if message.author.bot:
-            return
-        await bot.process_commands(message)
-
-# ==========================================
-# 💬 КОМАНДА ДЛЯ ПРОВЕРКИ (!тест)
-# ==========================================
-@bot.command(name="тест")
-async def test_ai(ctx, *, question: str):
-    await ctx.send("🤖 *Запрос отправлен...*")
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": "Ты — ИИ-помощник."},
-            {"role": "user", "content": question}
-        ]
-    }
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    try:
-        response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
-        await ctx.send(f"💬 **Ответ:** {response.json()['choices'][0]['message']['content']}")
-    except Exception as e:
-        await ctx.send(f"❌ Ошибка: {e}")
+        if content.strip():
+            await analyze_text(author_name, content)
 
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    client.run(TOKEN)
