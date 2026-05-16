@@ -1,31 +1,16 @@
 import os
 import discord
 import requests
-import http.server
-import socketserver
+from flask import Flask, request, jsonify
 import threading
 
 # ==========================================
-# 🛠️ ВЕБ-СЕРВЕР ДЛЯ РЕНДЕРА (МГНОВЕННЫЙ ВЫВОД)
+# 🌐 ВЕБ-СЕРВЕР ДЛЯ ПРЯМОГО ПРИЁМА ИЗ МАЙНА
 # ==========================================
-def run_dummy_server():
-    handler = http.server.SimpleHTTPRequestHandler
-    port = int(os.environ.get("PORT", 10000))
-    try:
-        with socketserver.TCPServer(("", port), handler) as httpd:
-            print(f"🌍 Веб-заглушка работает на порту {port}", flush=True)
-            httpd.serve_forever()
-    except Exception as e:
-        print(f"⚠️ Ошибка веб-сервера: {e}", flush=True)
+app = Flask(__name__)
 
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# ==========================================
-# 🤖 НАСТРОЙКИ И ПОДГОТОВКА ID
-# ==========================================
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-WATCH_CHANNEL_ID = os.environ.get("WATCH_CHANNEL_ID")
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 SECRET_CHAT_ID = os.environ.get("SECRET_CHAT_ID")
 
@@ -35,44 +20,44 @@ def clean_id(val):
     except:
         return None
 
-WATCH_CHANNEL_ID = clean_id(WATCH_CHANNEL_ID)
 LOG_CHANNEL_ID = clean_id(LOG_CHANNEL_ID)
 SECRET_CHAT_ID = clean_id(SECRET_CHAT_ID)
 
-# Включаем абсолютно все интенты шлюза
-intents = discord.Intents.all()
+# Настройка Discord клиента (теперь только для отправки)
+intents = discord.Intents.default()
 client = discord.Client(intents=intents)
-
 MODEL_NAME = "llama-3.1-8b-instant"
 
-print(f"🚀 СТАРТ СКИПТА! Наблюдение за: {WATCH_CHANNEL_ID} | Логи в: {LOG_CHANNEL_ID}", flush=True)
+@app.route('/', methods=['GET', 'HEAD'])
+def index():
+    return "ИИ-Судья работает!", 200
 
-# ==========================================
-# ⚡ МГНОВЕННЫЕ ЭВЕНТЫ ПОДКЛЮЧЕНИЯ
-# ==========================================
-@client.event
-async def on_connect():
-    print("🔌 Подключено к шлюзу Discord! Ждем готовности...", flush=True)
+# Сюда будут прилетать сообщения из Майнкрафта
+@app.route('/webhook', methods=['POST'])
+def minecraft_webhook():
+    data = request.json
+    if not data:
+        return jsonify({"status": "no_data"}), 400
+    
+    # Извлекаем игрока и его текст (подстроим под плагин)
+    author = data.get("username", "Игрок")
+    text = data.get("content", "")
+    
+    if text.strip():
+        print(f"\n📥 [ПРЯМОЙ ПЕРЕХВАТ ИЗ ИГРЫ] {author}: {text}", flush=True)
+        # Запускаем анализ ИИ в фоновом потоке, чтобы сервер игры не лагал, ждал ответа
+        threading.Thread(target=async_analyze_bridge, args=(author, text)).start()
+        
+    return jsonify({"status": "received"}), 200
 
-@client.event
-async def on_ready():
-    print(f"🟢 БОТ ПОЛНОСТЬЮ ГОТОВ! Имя в сети: {client.user}", flush=True)
-    # Сразу шлем сигнал в лог-канал, чтобы проверить отправку сообщений
-    if LOG_CHANNEL_ID:
-        try:
-            ch = client.get_channel(LOG_CHANNEL_ID)
-            if ch:
-                await ch.send("🤖 **ИИ-Судья успешно вошёл в сеть и готов к тестам чата!**")
-                print("🟢 Тестовое сообщение отправлено в Дискорд!", flush=True)
-        except Exception as log_err:
-            print(f"❌ Не удалось отправить старт-сообщение в канал: {log_err}", flush=True)
+def async_analyze_bridge(author, text):
+    # Мост для запуска асинхронного анализа из обычного Flask
+    client.loop.create_task(analyze_text(author, text))
 
 # ==========================================
 # 🧠 ОБРАБОТКА ТЕКСТА ЧЕРЕЗ ИИ
 # ==========================================
 async def analyze_text(author, text):
-    print(f"🔍 ИИ анализирует фразу от [{author}]: {text}", flush=True)
-    
     player_notes = ""
     if SECRET_CHAT_ID:
         try:
@@ -85,7 +70,7 @@ async def analyze_text(author, text):
                 if notes:
                     player_notes = "\n".join(notes)
         except Exception as e:
-            print(f"⚠️ Ошибка досье: {e}", flush=True)
+            print(f"⚠️ Ошибка чтения секретного чата: {e}", flush=True)
 
     system_prompt = (
         "Ты — скрытый ИИ-модератор сервера DigitalMine. Твоя задача — анализировать чат.\n"
@@ -109,76 +94,31 @@ async def analyze_text(author, text):
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
         if res.status_code == 200:
             verdict = res.json()['choices'][0]['message']['content']
-            print(f"🤖 Вердикт Groq: {verdict}", flush=True)
+            print(f"🤖 Вердикт ИИ для {author}: {verdict}", flush=True)
             
-            # Логируем в Дискорд, только если нашли реальную угрозу
             if "ПОДОЗРИТЕЛЬНО" in verdict.upper():
                 log_ch = client.get_channel(LOG_CHANNEL_ID)
                 if log_ch:
-                    emb = discord.Embed(title="🚨 Фиксация угрозы в чате!", color=discord.Color.red())
-                    emb.add_field(name="Игрок", value=author, inline=True)
-                    emb.add_field(name="Фраза", value=text, inline=False)
-                    emb.add_field(name="Судейский вердикт", value=verdict, inline=False)
+                    emb = discord.Embed(title="🚨 Фиксация угрозы в игре!", color=discord.Color.red())
+                    emb.add_field(name="Нарушитель", value=author, inline=True)
+                    emb.add_field(name="Фраза в чате", value=text, inline=False)
+                    emb.add_field(name="Анализ Судьи", value=verdict, inline=False)
                     await log_ch.send(embed=emb)
-                    print("🔴 Эмбед угрозы отправлен в Дискорд!", flush=True)
+                    print(f"🔴 Эмбед угрозы игрока {author} отправлен в Дискорд!", flush=True)
         else:
-            print(f"❌ Ошибка Groq API: {res.status_code} | {res.text}", flush=True)
+            print(f"❌ Ошибка Groq API: {res.status_code}", flush=True)
     except Exception as err:
         print(f"❌ Ошибка сети с ИИ: {err}", flush=True)
 
-# ==========================================
-# 🛑 УЛЬТРА-ПЕРЕХВАТ СЫРЫХ СОБЫТИЙ (С ПОЛНЫМ ДЕБАГОМ)
-# ==========================================
 @client.event
-async def on_raw_message_create(payload):
-    if WATCH_CHANNEL_ID and payload.channel_id == WATCH_CHANNEL_ID:
-        
-        try:
-            channel = client.get_channel(payload.channel_id) or await client.fetch_channel(payload.channel_id)
-            message = await channel.fetch_message(payload.message_id)
-        except Exception as fetch_err:
-            print(f"⚠️ Не удалось прочесть сырое сообщение: {fetch_err}", flush=True)
-            return
+async def on_ready():
+    print(f"🟢 БОТ ДЛЯ ОТПРАВКИ ЛОГОВ ГОТОВ! Сеть: {client.user}", flush=True)
 
-        if message.author.id == client.user.id:
-            return
-
-        print(f"\n📥 [ПЕРЕХВАТ] КТО-ТО НАПИСАЛ! Автор: {message.author} (Бот/Вебхук: {message.author.bot})", flush=True)
-        
-        content = ""
-        author_name = message.author.display_name
-
-        # 🕵️‍♂️ ДЕБАГ ПОЛЯ: Распечатываем всё, что прилетело от DiscordSRV
-        print(f"📋 Сырой контент (content): '{message.content}'", flush=True)
-        print(f"📋 Кол-во эмбедов (embeds): {len(message.embeds)}", flush=True)
-
-        # 1. Проверяем обычный текст
-        if message.content and message.content.strip():
-            content = message.content
-
-        # 2. Проверяем сложные эмбеды от вебхуков плагина
-        if not content and message.embeds:
-            emb = message.embeds[0]
-            print(f"📊 Свойства эмбеда -> Title: '{emb.title}', Desc: '{emb.description}'", flush=True)
-            if emb.author:
-                print(f"📊 Автор эмбеда -> Name: '{emb.author.name}'", flush=True)
-                author_name = emb.author.name
-            
-            # Собираем текст из любого доступного стандартного поля
-            content = emb.description or emb.title or ""
-            
-            # Если DiscordSRV засунул текст в блоки полей (fields)
-            if not content and emb.fields:
-                print(f"📊 Найдены поля в эмбеде! Fields: {emb.fields}", flush=True)
-                content = " ".join([f.value for f in emb.fields if f.value])
-
-        print(f"📝 ИТОГОВЫЙ РАСПОЗНАННЫЙ ТЕКСТ: '{content}' от {author_name}\n", flush=True)
-
-        # Если текст вытащили — отправляем в Groq ИИ
-        if content and content.strip():
-            await analyze_text(author_name, content)
-        else:
-            print("⚠️ Робот не смог извлечь текст. Проверь логи дебага выше!", flush=True)
+# Запуск веб-сервера Flask в отдельном потоке
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
     client.run(TOKEN)
