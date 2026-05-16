@@ -25,7 +25,7 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 # 🤖 НАСТРОЙКИ БОТА
 # ==========================================
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-API_KEY = os.environ.get("DEEPSEEK_API_KEY") # Здесь теперь лежит ключ OpenRouter
+API_KEY = os.environ.get("DEEPSEEK_API_KEY") # Здесь твой ключ от OpenRouter (sk-or-...)
 WATCH_CHANNEL_ID = os.environ.get("WATCH_CHANNEL_ID")
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
@@ -36,25 +36,25 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Используем отличную бесплатную модель от Meta
-MODEL_NAME = "meta-llama/llama-3-8b-instruct:free"
+# Самая стабильная БЕСПЛАТНАЯ модель на OpenRouter прямо сейчас
+MODEL_NAME = "meta-llama/llama-3.1-8b-instruct:free"
 
 @bot.event
 async def on_ready():
     print(f"🤖 ИИ-Судья запущен как {bot.user}!")
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send("🟢 **ИИ-Судья переведен на бесплатный OpenRouter и готов к защите!**")
+        await log_channel.send("🟢 **ИИ-Судья успешно переключен на Llama 3.1 и готов к работе!**")
 
 # === ОБЩЕНИЕ НАПРЯМУЮ ===
 @bot.command(name="тест")
 async def test_ai(ctx, *, question: str):
-    await ctx.send("🤖 *Посылаю запрос в бесплатную нейросеть...*")
+    await ctx.send("🤖 *Посылаю запрос в бесплатную нейросеть OpenRouter...*")
     
     payload = {
         "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": "Ты — ИИ-помощник майнкрафт сервера. Отвечай кратко и емко на русском языке."},
+            {"role": "system", "content": "Ты — ИИ-помощник майнкрафт сервера. Отвечай кратко, емко и строго на русском языке."},
             {"role": "user", "content": question}
         ]
     }
@@ -83,7 +83,7 @@ async def on_message(message):
         payload = {
             "model": MODEL_NAME,
             "messages": [
-                {"role": "system", "content": "Ты — скрытый ИИ-модератор Майнкрафт сервера. Анализируй сообщения игроков. Если игрок замышляет гриферство, кражу, поджог привата, заговор против админа или жестко токсичит, отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина]. Если все в порядке, пиши [БЕЗОПАСНО]. Отвечай на русском языке."},
+                {"role": "system", "content": "Ты — скрытый ИИ-модератор Майнкрафт сервера. Анализируй сообщения игроков. Если игрок замышляет гриферство, кражу, поджог привата, заговор против админа или жестко токсичит, отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина]. Если все в порядке, пиши [БЕЗОПАСНО]. Отвечай строго на русском языке."},
                 {"role": "user", "content": message.content}
             ]
         }
@@ -99,7 +99,7 @@ async def on_message(message):
                 if "ПОДОЗРИТЕЛЬНО" in result.upper():
                     log_channel = bot.get_channel(LOG_CHANNEL_ID)
                     if log_channel:
-                        embed = discord.Embed(title="🚨 Судья обнаружил угрозу на сервере!", color=discord.Color.red())
+                        embed = discord.Embed(title="🚨 Судья обнаружила угрозу!", color=discord.Color.red())
                         embed.add_field(name="Нарушитель", value=message.author.name, inline=True)
                         embed.add_field(name="Что написано", value=message.content, inline=False)
                         embed.add_field(name="Анализ Судьи", value=result, inline=False)
