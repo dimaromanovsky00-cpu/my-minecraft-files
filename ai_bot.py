@@ -61,3 +61,20 @@ async def on_message(message):
                 await log_channel.send(f"⚠️ **[ИИ-АНАЛИЗ]**: {analysis}\n*Контекст: {message.content}*")
 
 client.run(TOKEN)
+
+
+# Код-обманка для Render, чтобы он думал, что это сайт
+import http.server
+import socketserver
+import threading
+
+def run_dummy_server():
+    handler = http.server.SimpleHTTPRequestHandler
+    # Render автоматически передает порт в переменные окружения, мы его читаем
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        httpd.serve_forever()
+
+# Запускаем сайт-заглушку в отдельном потоке, чтобы он не мешал Дискорд-боту
+threading.Thread(target=run_dummy_server, daemon=True).start()
