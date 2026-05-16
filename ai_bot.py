@@ -25,7 +25,7 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 # 🤖 НАСТРОЙКИ БОТА
 # ==========================================
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+API_KEY = os.environ.get("DEEPSEEK_API_KEY") # Здесь теперь лежит ключ OpenRouter
 WATCH_CHANNEL_ID = os.environ.get("WATCH_CHANNEL_ID")
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
@@ -36,26 +36,27 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Используем отличную бесплатную модель от Meta
+MODEL_NAME = "meta-llama/llama-3-8b-instruct:free"
+
 @bot.event
 async def on_ready():
-    print(f"🤖 ИИ-Судья успешно запущен как {bot.user}!")
+    print(f"🤖 ИИ-Судья запущен как {bot.user}!")
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send("🟢 **ИИ-Судья успешно запущен и готов к тесту DeepSeek!**")
+        await log_channel.send("🟢 **ИИ-Судья переведен на бесплатный OpenRouter и готов к защите!**")
 
-# === ОБЩЕНИЕ С DEEPSEEK НАПРЯМУЮ ===
+# === ОБЩЕНИЕ НАПРЯМУЮ ===
 @bot.command(name="тест")
-async def test_deepseek(ctx, *, question: str):
-    """Команда для прямого разговора с ИИ: !тест [твой вопрос]"""
-    await ctx.send("🤖 *Посылаю запрос в DeepSeek...*")
+async def test_ai(ctx, *, question: str):
+    await ctx.send("🤖 *Посылаю запрос в бесплатную нейросеть...*")
     
     payload = {
-        "model": "deepseek-chat",
+        "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": "Ты — ИИ-помощник майнкрафт сервера. Отвечай кратко и емко."},
+            {"role": "system", "content": "Ты — ИИ-помощник майнкрафт сервера. Отвечай кратко и емко на русском языке."},
             {"role": "user", "content": question}
-        ],
-        "temperature": 0.7
+        ]
     }
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -63,12 +64,12 @@ async def test_deepseek(ctx, *, question: str):
     }
     
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers)
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
-            await ctx.send(f"💬 **Ответ от DeepSeek:**\n{result}")
+            await ctx.send(f"💬 **Ответ ИИ:**\n{result}")
         else:
-            await ctx.send(f"❌ Ошибка DeepSeek! Код ответа сервера: {response.status_code}\nПроверь баланс или API ключ.")
+            await ctx.send(f"❌ Ошибка! Код ответа сервера: {response.status_code}\nТекст: {response.text}")
     except Exception as e:
         await ctx.send(f"❌ Произошла ошибка: {e}")
 
@@ -78,15 +79,13 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Проверяем игровой чат
     if message.channel.id == WATCH_CHANNEL_ID:
         payload = {
-            "model": "deepseek-chat",
+            "model": MODEL_NAME,
             "messages": [
-                {"role": "system", "content": "Ты — скрытый ИИ-модератор Майнкрафт сервера. Анализируй сообщения игроков. Если игрок замышляет гриферство, кражу, поджог привата, заговор против админа или жестко токсичит, отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина]. Если все в порядке, пиши [БЕЗОПАСНО]."},
+                {"role": "system", "content": "Ты — скрытый ИИ-модератор Майнкрафт сервера. Анализируй сообщения игроков. Если игрок замышляет гриферство, кражу, поджог привата, заговор против админа или жестко токсичит, отвечай строго в формате: [ПОДОЗРИТЕЛЬНО: причина]. Если все в порядке, пиши [БЕЗОПАСНО]. Отвечай на русском языке."},
                 {"role": "user", "content": message.content}
-            ],
-            "temperature": 0.2
+            ]
         }
         headers = {
             "Authorization": f"Bearer {API_KEY}",
@@ -94,7 +93,7 @@ async def on_message(message):
         }
         
         try:
-            response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers)
+            response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
             if response.status_code == 200:
                 result = response.json()['choices'][0]['message']['content']
                 if "ПОДОЗРИТЕЛЬНО" in result.upper():
