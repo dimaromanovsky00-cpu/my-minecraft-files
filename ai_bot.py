@@ -1,4 +1,5 @@
 import os
+import re
 import discord
 import requests
 from flask import Flask
@@ -129,6 +130,37 @@ async def on_raw_message_create(payload):
 async def process_discord_msg(message):
     content = message.content
     author_name = message.author.display_name
+
+    # ---------------------------------------------------------------------
+    # 🔥 НОВЫЙ БЛОК: ПЕРЕХВАТ И ОЧИСТКА КОНСОЛЬНЫХ ЛОГОВ (ВХОДЫ И IP / ВЫХОДЫ)
+    # ---------------------------------------------------------------------
+    if content and content.strip():
+        # 1. Ловим вход игрока и забираем IP
+        if "logged in with entity id" in content:
+            # Парсим под формат: [сб 20:10:08 INFO Server/PlayerList] Aklimov[/5.165.20.36:31685] logged in...
+            match = re.search(r"\[\w+\s+(\d{2}:\d{2}:\d{2})\s+INFO.*?\]\s+(\w+)\[\/(.*?):\d+\]\s+logged\s+in", content)
+            if match:
+                time_str, username, ip_address = match.group(1), match.group(2), match.group(3)
+                clean_msg = f"⏰ `[{time_str}]` | 🟢 **{username}** зашёл на сервер | 🌐 `[IP: {ip_address}]`"
+                
+                log_ch = client.get_channel(LOG_CHANNEL_ID)
+                if log_ch:
+                    await log_ch.send(clean_msg)
+                return  # Прерываем, чтобы ИИ-Судья не тратил токены на системный лог
+
+        # 2. Ловим выход игрока
+        elif "lost connection:" in content:
+            # Парсим под формат: [сб 20:06:43 INFO Server/ServerGamePacketListenerImpl] Aklimov lost connection...
+            match = re.search(r"\[\w+\s+(\d{2}:\d{2}:\d{2})\s+INFO.*?\]\s+(\w+)\s+lost\s+connection", content)
+            if match:
+                time_str, username = match.group(1), match.group(2)
+                clean_msg = f"⏰ `[{time_str}]` | 🔴 **{username}** вышел с сервера"
+                
+                log_ch = client.get_channel(LOG_CHANNEL_ID)
+                if log_ch:
+                    await log_ch.send(clean_msg)
+                return  # Прерываем
+    # ---------------------------------------------------------------------
 
     # Если DiscordSRV шлёт текст от имени бота в формате "Ник: текст" или "[Игрок] Ник: текст"
     if content and content.strip():
